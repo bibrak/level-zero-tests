@@ -207,6 +207,114 @@ INSTANTIATE_TEST_SUITE_P(
                        ::testing::Values(0, 1, size / 4, size / 2),
                        ::testing::Bool()));
 
+/////////////////
+class KernelCopyTests_SharedSystem
+    : public ::testing::Test,
+      public ::testing::WithParamInterface<std::tuple<int, bool>> {};
+
+TEST_P(KernelCopyTests_SharedSystem,
+       GivenDirectMemoryWhenCopyingDataInKernelThenCopyIsCorrect_SharedSystem) {
+
+  int offset = std::get<0>(GetParam());
+  bool is_immediate = std::get<1>(GetParam());
+
+  for (auto driver : lzt::get_all_driver_handles()) {
+    for (auto device : lzt::get_devices(driver)) {
+      // set up
+      auto cmd_bundle = lzt::create_command_bundle(device, is_immediate);
+
+      auto module = lzt::create_module(device, "copy_module.spv");
+      auto kernel = lzt::create_function(module, "copy_data");
+
+      int *input_data, *output_data;
+      size_t size_in_bytes = size * sizeof(int);
+      input_data = static_cast<int *>(malloc(size_in_bytes));
+      output_data = static_cast<int *>(malloc(size_in_bytes));
+
+      std::cout << "input_data address: " << std::hex << input_data
+                << std::endl;
+      std::cout << "output_data address: " << std::hex << output_data
+                << std::endl;
+
+      lzt::write_data_pattern(input_data, size * sizeof(int), 1);
+      memset(output_data, 0, size * sizeof(int));
+
+      lzt::set_argument_value(kernel, 0, sizeof(input_data), &input_data);
+      lzt::set_argument_value(kernel, 1, sizeof(output_data), &output_data);
+      lzt::set_argument_value(kernel, 2, sizeof(int), &offset);
+      lzt::set_argument_value(kernel, 3, sizeof(int), &size);
+
+      lzt::set_group_size(kernel, 1, 1, 1);
+
+      ze_group_count_t group_count;
+      group_count.groupCountX = 1;
+      group_count.groupCountY = 1;
+      group_count.groupCountZ = 1;
+
+         EXPECT_EQ(ZE_RESULT_SUCCESS,
+                 zeCommandListAppendMemAdvise(
+                     cmd_bundle.list, device, input_data, size_in_bytes,
+                     ZE_MEMORY_ADVICE_SET_PREFERRED_LOCATION));
+
+       EXPECT_EQ(ZE_RESULT_SUCCESS,
+                 zeCommandListAppendMemAdvise(
+                     cmd_bundle.list, device, output_data, size_in_bytes,
+                     ZE_MEMORY_ADVICE_SET_PREFERRED_LOCATION));  
+
+        EXPECT_EQ(ZE_RESULT_SUCCESS,
+                 zeCommandListAppendMemoryPrefetch(cmd_bundle.list, input_data,
+                                                   size_in_bytes));
+
+       EXPECT_EQ(ZE_RESULT_SUCCESS,
+                 zeCommandListAppendMemoryPrefetch(cmd_bundle.list, output_data,
+                                                   size_in_bytes)); 
+
+      lzt::append_launch_function(cmd_bundle.list, kernel, &group_count,
+                                  nullptr, 0, nullptr);
+
+      lzt::close_command_list(cmd_bundle.list);
+      std::cout << "Executing kernel with offset: " << offset
+                << " and immediate: " << std::boolalpha << is_immediate
+                << std::endl;
+      lzt::execute_and_sync_command_bundle(cmd_bundle, UINT64_MAX);
+
+      std::cout << "Kernel execution completed" << std::endl;
+      memcpy(output_data + offset, input_data, (size - offset) * sizeof(int));
+      std::cout << "Data copied to output_data" << std::endl;
+
+      lzt::append_launch_function(cmd_bundle.list, kernel, &group_count,
+                                  nullptr, 0, nullptr);
+
+      lzt::close_command_list(cmd_bundle.list);
+      std::cout << "Executing kernel with offset: " << offset
+                << " and immediate: " << std::boolalpha << is_immediate
+                << std::endl;
+      lzt::execute_and_sync_command_bundle(cmd_bundle, UINT64_MAX);
+
+      std::cout << "Kernel execution completed" << std::endl;
+
+       ASSERT_EQ(0, memcmp(input_data, output_data + offset,
+                          (size - offset) * sizeof(int))); 
+
+      // cleanup
+      free(input_data);
+      free(output_data);
+      lzt::destroy_function(kernel);
+      lzt::destroy_module(module);
+      lzt::destroy_command_bundle(cmd_bundle);
+    }
+  }
+}
+
+INSTANTIATE_TEST_SUITE_P(
+    LZT, KernelCopyTests_SharedSystem,
+    ::testing::Combine(::testing::Values(0), // 1, size / 4, size / 2),
+                                              ::testing::Bool()
+                     //  ::testing::Values(true)
+                      ));
+
+/////////////////
+
 class KernelCopyTestsWithIndirectMemoryTypes
     : public ::testing::Test,
       public ::testing::WithParamInterface<

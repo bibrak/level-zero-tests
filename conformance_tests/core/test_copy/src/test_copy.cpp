@@ -1041,6 +1041,89 @@ INSTANTIATE_TEST_SUITE_P(
                           ZE_MEMORY_ADVICE_BIAS_UNCACHED),
         ::testing::Bool()));
 
+class zeCommandListAppendSharedSystemMemAdviseTests
+    : public ::testing::Test,
+      public ::testing::WithParamInterface<
+          std::tuple<ze_memory_advice_t, bool>> {};
+
+TEST_P(
+    zeCommandListAppendSharedSystemMemAdviseTests,
+    GivenSharedSystemMemAdviseWhenWritingFromDeviceThenDataIsCorrectFromHost) {
+  const size_t size = 16;
+  const uint8_t value = 0x55;
+  void *memory = malloc(size);
+  memset(memory, 0xaa, size);
+  ze_memory_advice_t mem_advice = std::get<0>(GetParam());
+  bool is_immediate = std::get<1>(GetParam());
+  auto cmd_bundle = lzt::create_command_bundle(is_immediate);
+
+  EXPECT_EQ(ZE_RESULT_SUCCESS,
+            zeCommandListAppendMemAdvise(cmd_bundle.list,
+                                         zeDevice::get_instance()->get_device(),
+                                         memory, size, mem_advice));
+
+   lzt::append_memory_set(cmd_bundle.list, memory, &value, size);
+  lzt::close_command_list(cmd_bundle.list);
+  lzt::execute_and_sync_command_bundle(cmd_bundle, UINT64_MAX);
+
+   for (size_t i = 0; i < size; i++) {
+    ASSERT_EQ(value, ((uint8_t *)memory)[i]);
+  } 
+
+  free(memory);
+  lzt::destroy_command_bundle(cmd_bundle);
+}
+
+INSTANTIATE_TEST_SUITE_P(
+    MemAdviceFlags, zeCommandListAppendSharedSystemMemAdviseTests,
+    ::testing::Combine(
+        ::testing::Values(ZE_MEMORY_ADVICE_SET_PREFERRED_LOCATION),
+        ::testing::Values(true)));
+
+/* INSTANTIATE_TEST_SUITE_P(
+    MemAdviceFlags, zeCommandListAppendSharedSystemMemAdviseTests,
+    ::testing::Combine(
+        ::testing::Values(
+            ZE_MEMORY_ADVICE_SET_READ_MOSTLY,
+            ZE_MEMORY_ADVICE_CLEAR_READ_MOSTLY,
+            ZE_MEMORY_ADVICE_SET_PREFERRED_LOCATION,
+            ZE_MEMORY_ADVICE_CLEAR_PREFERRED_LOCATION,
+            ZE_MEMORY_ADVICE_SET_SYSTEM_MEMORY_PREFERRED_LOCATION,
+            ZE_MEMORY_ADVICE_CLEAR_SYSTEM_MEMORY_PREFERRED_LOCATION,
+            ZE_MEMORY_ADVICE_SET_NON_ATOMIC_MOSTLY,
+            ZE_MEMORY_ADVICE_CLEAR_NON_ATOMIC_MOSTLY,
+            ZE_MEMORY_ADVICE_BIAS_CACHED, ZE_MEMORY_ADVICE_BIAS_UNCACHED),
+        ::testing::Bool())); */
+
+class zeCommandListAppendMemoryPrefetchTests_X : public ::testing::Test {
+protected:
+  void RunGivenMemoryPrefetchWhenWritingFromDeviceTest_X(bool is_immediate) {
+    const size_t size = 16;
+    const uint8_t value = 0x55;
+    void *memory = malloc(size);
+    memset(memory, 0xaa, size);
+    auto cmd_bundle = lzt::create_command_bundle(is_immediate);
+
+     EXPECT_EQ(ZE_RESULT_SUCCESS,
+              zeCommandListAppendMemoryPrefetch(cmd_bundle.list, memory, size));
+    lzt::append_memory_set(cmd_bundle.list, memory, &value, size);
+    lzt::close_command_list(cmd_bundle.list);
+    lzt::execute_and_sync_command_bundle(cmd_bundle, UINT64_MAX);
+
+    for (size_t i = 0; i < size; i++) {
+      ASSERT_EQ(value, ((uint8_t *)memory)[i]);
+    }
+
+    free(memory);
+    lzt::destroy_command_bundle(cmd_bundle);
+  }
+};
+
+TEST_F(zeCommandListAppendMemoryPrefetchTests_X,
+       GivenMemoryPrefetchWhenWritingFromDeviceThenDataisCorrectFromHost_X) {
+  RunGivenMemoryPrefetchWhenWritingFromDeviceTest_X(true);
+}
+
 class zeCommandListAppendMemoryCopyParameterizedTests
     : public ::testing::Test,
       public ::testing::WithParamInterface<
